@@ -80,7 +80,7 @@ BarWidget {
     implicitWidth: Math.max(Style.space(13), badgeText.implicitWidth + Style.space(5))
     implicitHeight: Style.space(13)
     radius: height / 2
-    color: root.bar ? root.bar.urgent : Color.urgent
+    color: Color.accent
     border.width: 1
     border.color: root.bar ? root.bar.background : Color.background
 
