@@ -104,6 +104,7 @@ function errorText(code) {
     case "unauthorized": return "The server rejected the token"
     case "unreachable": return "Server unreachable"
     case "insecure_http": return "Refusing to send the token over plain HTTP"
+    case "invalid_url": return "The server URL is invalid (remove any user:pass@)"
     case "bad_response": return "The server returned an unexpected response"
     case "empty": return "Nothing to capture"
     case "missing_id": return "Missing task id"

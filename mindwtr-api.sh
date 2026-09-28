@@ -59,20 +59,42 @@ server_host="${server_host%%/*}"
 # Refuse to put the bearer token on the wire in cleartext to a remote host.
 # Loopback stays allowed for local test servers; anything else needs an explicit
 # opt-in via allowInsecureHttp / MINDWTR_ALLOW_INSECURE_HTTP.
+#
+# The host is parsed properly rather than by string prefix: `127.example.com`
+# is a remote name, not loopback, and userinfo (`http://user@host`) is rejected
+# outright so it cannot smuggle a loopback-looking authority in front of a
+# remote host.
 scheme="${base_url%%://*}"
-host_port="${base_url#*://}"
-host_port="${host_port%%/*}"
-if [[ $host_port == \[* ]]; then
-  host_only="${host_port%%]*}"
+authority="${base_url#*://}"
+authority="${authority%%/*}"
+if [[ $authority == *@* ]]; then
+  emit_error "invalid_url"
+fi
+if [[ $authority == \[* ]]; then
+  host_only="${authority%%]*}"
   host_only="${host_only#[}"
 else
-  host_only="${host_port%%:*}"
+  host_only="${authority%%:*}"
 fi
-case "$host_only" in
-  localhost | 127.* | ::1 | 0.0.0.0) loopback=1 ;;
-  *) loopback=0 ;;
-esac
-if [[ $scheme == http && $loopback -eq 0 && -z $allow_insecure_http ]]; then
+
+is_loopback_host() {
+  local host="$1"
+  [[ $host == localhost ]] && return 0
+  [[ $host == ::1 || $host == 0:0:0:0:0:0:0:1 ]] && return 0
+  [[ $host == 0.0.0.0 ]] && return 0
+  local -a octets
+  IFS='.' read -r -a octets <<<"$host"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+  local octet
+  for octet in "${octets[@]}"; do
+    [[ $octet =~ ^[0-9]{1,3}$ ]] || return 1
+    (( 10#$octet <= 255 )) || return 1
+  done
+  (( 10#${octets[0]} == 127 )) && return 0
+  return 1
+}
+
+if [[ $scheme == http ]] && ! is_loopback_host "$host_only" && [[ -z $allow_insecure_http ]]; then
   emit_error "insecure_http"
 fi
 
