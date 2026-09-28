@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "mindwtr",
+  "name": "Mindwtr",
+  "version": "0.1.0",
+  "author": "Sebastian",
+  "license": "MIT",
+  "description": "Mindwtr GTD tasks from a self-hosted Mindwtr Cloud server in the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Mindwtr",
+    "description": "Focus, Inbox, Next, Waiting and Someday buckets from your Mindwtr Cloud server, with quick capture and mark-done.",
+    "category": "Productivity",
+    "aliases": [
+      "gtd",
+      "tasks",
+      "todo",
+      "next-actions"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "badge": "focus",
+      "showCount": true,
+      "quickAdd": true,
+      "completeOnClick": true,
+      "refreshIntervalSec": 120
+    },
+    "schema": [
+      {
+        "key": "badge",
+        "type": "enum",
+        "label": "Badge",
+        "description": "Which bucket the number next to the icon counts.",
+        "options": [
+          "focus",
+          "inbox",
+          "next",
+          "waiting"
+        ],
+        "defaultValue": "focus"
+      },
+      {
+        "key": "showCount",
+        "type": "boolean",
+        "label": "Show count",
+        "description": "Show the bucket count as a badge on the bar icon.",
+        "defaultValue": true
+      },
+      {
+        "key": "quickAdd",
+        "type": "boolean",
+        "label": "Quick capture",
+        "description": "Show the capture field in the panel. Adds to the Inbox through POST /v1/tasks.",
+        "defaultValue": true
+      },
+      {
+        "key": "completeOnClick",
+        "type": "boolean",
+        "label": "Complete on click",
+        "description": "Clicking a task marks it done on the server.",
+        "defaultValue": true
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "description": "How often the bar reloads tasks from the server.",
+        "min": 30,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 120
+      }
+    ]
+  }
+}
