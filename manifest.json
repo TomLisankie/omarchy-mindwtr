@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mindwtr",
   "name": "Mindwtr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Sebastian",
   "license": "MIT",
   "description": "Mindwtr GTD tasks from a self-hosted Mindwtr Cloud server in the Omarchy bar.",
@@ -28,7 +28,7 @@
       "badge": "inbox",
       "showCount": true,
       "quickAdd": true,
-      "completeOnClick": true,
+      "checkbox": true,
       "refreshIntervalSec": 120
     },
     "schema": [
@@ -60,10 +60,10 @@
         "defaultValue": true
       },
       {
-        "key": "completeOnClick",
+        "key": "checkbox",
         "type": "boolean",
-        "label": "Complete on click",
-        "description": "Clicking a task marks it done on the server.",
+        "label": "Row checkbox",
+        "description": "Show a checkbox on each row; clicking it or pressing d marks the task done. Clicking the row opens its details.",
         "defaultValue": true
       },
       {

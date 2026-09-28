@@ -4,7 +4,8 @@
 # Reads the server URL and bearer token from the first source that has them:
 #   1. MINDWTR_CLOUD_URL / MINDWTR_CLOUD_TOKEN environment variables
 #   2. ~/.config/omarchy/mindwtr.json  ({"baseUrl": "...", "token": "...",
-#      "insecureSkipVerify": false, "allowInsecureHttp": false})
+#      "label": "Mindwtr Cloud", "insecureSkipVerify": false,
+#      "allowInsecureHttp": false})
 #
 # Every subcommand prints a single JSON object on stdout and exits 0 for
 # expected failures, so the QML side only ever has to parse JSON. The token is
@@ -15,6 +16,7 @@
 #   summary            Fetch tasks + projects and emit grouped buckets
 #   capture <text>     Quick-add a task to the Inbox (POST /v1/tasks)
 #   complete <id>      Mark a task done (POST /v1/tasks/:id/complete)
+#   task <id>          Fetch one task's full details (GET /v1/tasks/:id)
 #   ping               Verify URL + token with a tiny request
 
 set -uo pipefail
@@ -31,16 +33,19 @@ base_url="${MINDWTR_CLOUD_URL:-}"
 token="${MINDWTR_CLOUD_TOKEN:-}"
 insecure=""
 allow_insecure_http="${MINDWTR_ALLOW_INSECURE_HTTP:-}"
+display_label="${MINDWTR_LABEL:-}"
 
 if [[ -r $CONFIG_FILE ]]; then
   cfg_url=$(jq -r '.baseUrl // .url // empty' "$CONFIG_FILE" 2>/dev/null)
   cfg_token=$(jq -r '.token // empty' "$CONFIG_FILE" 2>/dev/null)
   cfg_insecure=$(jq -r 'if .insecureSkipVerify == true then "1" else "" end' "$CONFIG_FILE" 2>/dev/null)
   cfg_insecure_http=$(jq -r 'if .allowInsecureHttp == true then "1" else "" end' "$CONFIG_FILE" 2>/dev/null)
+  cfg_label=$(jq -r '.label // empty' "$CONFIG_FILE" 2>/dev/null)
   [[ -z $base_url ]] && base_url="$cfg_url"
   [[ -z $token ]] && token="$cfg_token"
   [[ -n $cfg_insecure ]] && insecure="1"
   [[ -n $cfg_insecure_http ]] && allow_insecure_http="1"
+  [[ -z $display_label ]] && display_label="$cfg_label"
 fi
 
 emit_error() { jq -cn --arg e "$1" '{ok:false,error:$e}'; exit 0; }
@@ -55,6 +60,8 @@ base_url="${base_url%/}"
 
 server_host="${base_url#*://}"
 server_host="${server_host%%/*}"
+# Friendly display name for the bar/panel; falls back to the host.
+server_display="${display_label:-$server_host}"
 
 # Refuse to put the bearer token on the wire in cleartext to a remote host.
 # Loopback stays allowed for local test servers; anything else needs an explicit
@@ -179,7 +186,7 @@ cmd_summary() {
   jq -cn \
     --slurpfile tasks "$tmp/tasks.ndjson" \
     --slurpfile projects "$tmp/projects.ndjson" \
-    --arg server "$server_host" \
+    --arg server "$server_display" \
     --arg fetchedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)" \
     '
     ($projects | map({ (.id): .title }) | add // {}) as $pm
@@ -245,10 +252,64 @@ cmd_complete() {
   esac
 }
 
+cmd_task() {
+  local id="${1:-}"
+  [[ -n $id ]] || emit_error "missing_id"
+  request GET "/v1/tasks/$id"
+  case $resp_code in
+    200) ;;
+    404) emit_error "not_found" ;;
+    *) emit_error "$(http_error "$resp_code")" ;;
+  esac
+
+  # Keep the task response; the project lookup below reuses resp_body.
+  local response="$resp_body"
+
+  # Resolve the project title for display; failure here just leaves it blank.
+  local projects='[]'
+  request GET "/v1/projects?limit=500"
+  [[ $resp_code == 200 ]] && projects=$(jq -c '.projects // []' <<<"$resp_body" 2>/dev/null)
+
+  local task
+  task=$(jq -c '.task // {}' <<<"$response" 2>/dev/null)
+
+  jq -cn \
+    --argjson task "$task" \
+    --argjson projects "$projects" \
+    '
+    ($projects | map({ (.id): .title }) | add // {}) as $pm
+    | {
+        ok: true,
+        task: {
+          id: ($task.id // ""),
+          title: ($task.title // ""),
+          status: ($task.status // ""),
+          dueDate: ($task.dueDate // ""),
+          startTime: ($task.startTime // ""),
+          reviewAt: ($task.reviewAt // ""),
+          priority: ($task.priority // ""),
+          energyLevel: ($task.energyLevel // ""),
+          timeEstimate: (if ($task.timeEstimate // "") | type == "string" then $task.timeEstimate else "" end),
+          timeSpentMinutes: ($task.timeSpentMinutes // 0),
+          contexts: ($task.contexts // []),
+          tags: ($task.tags // []),
+          project: (if ($task.projectId // "") == "" then "" else ($pm[$task.projectId] // "") end),
+          assignedTo: ($task.assignedTo // ""),
+          location: ($task.location // ""),
+          description: ($task.description // ""),
+          focused: ($task.isFocusedToday == true),
+          completedAt: ($task.completedAt // ""),
+          checklist: [ ($task.checklist // [])[]? | { id: (.id // ""), title: (.title // ""), done: (.isCompleted == true) } ],
+          attachments: [ ($task.attachments // [])[]? | select(.deletedAt == null) | { kind: (.kind // ""), title: (.title // ""), uri: (.uri // "") } ]
+        }
+      }
+    '
+}
+
 cmd_ping() {
   request GET "/v1/tasks?limit=1"
   case $resp_code in
-    200) jq -cn --arg server "$server_host" '{ok:true,server:$server}' ;;
+    200) jq -cn --arg server "$server_display" '{ok:true,server:$server}' ;;
     *) emit_error "$(http_error "$resp_code")" ;;
   esac
 }
@@ -257,6 +318,7 @@ case "${1:-summary}" in
   summary) cmd_summary ;;
   capture) cmd_capture "${2:-}" ;;
   complete) cmd_complete "${2:-}" ;;
+  task) cmd_task "${2:-}" ;;
   ping) cmd_ping ;;
   *) emit_error "unknown_command" ;;
 esac

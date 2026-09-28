@@ -8,6 +8,15 @@ import "Model.js" as Model
 // Mindwtr popup panel. Owns all server IO for the plugin: the bar widget is a
 // thin renderer of the counts this panel exposes. The panel stays mounted
 // while closed, so the refresh timer keeps the badge fresh.
+//
+// Keyboard model (when the capture field is not focused):
+//   Up/Down or k/j   move the row cursor
+//   Enter / Space    open the selected task's details
+//   d                mark the selected (or shown) task done
+//   c or /           focus the capture field
+//   r                refresh
+//   g / G            jump to first / last row
+//   Esc              back out of details, else close the panel
 Panel {
   id: root
   moduleName: "mindwtr"
@@ -28,6 +37,19 @@ Panel {
   property bool loading: false
   property string errorText: ""
   property string activeTab: "focus"
+
+  property int selectedIndex: 0
+  property bool detailsOpen: false
+  property var detailTask: null
+  property bool detailLoading: false
+  property string detailError: ""
+
+  // Partial detailTask objects (from the summary) may lack these fields, so
+  // coerce once here rather than binding undefined into bool/string props.
+  readonly property var detailChecklist: (detailTask && Array.isArray(detailTask.checklist)) ? detailTask.checklist : []
+  readonly property var detailAttachments: (detailTask && Array.isArray(detailTask.attachments)) ? detailTask.attachments : []
+  readonly property string detailDescription: (detailTask && detailTask.description) ? String(detailTask.description) : ""
+  readonly property string detailTitle: (detailTask && detailTask.title) ? String(detailTask.title) : "\u2026"
 
   property string captureText: ""
   property bool capturing: false
@@ -50,7 +72,7 @@ Panel {
 
   readonly property int refreshSecs: Math.max(30, parseInt(setting("refreshIntervalSec", 120), 10) || 120)
   readonly property bool quickAddEnabled: setting("quickAdd", true) === true
-  readonly property bool completeOnClick: setting("completeOnClick", true) === true
+  readonly property bool showCheckbox: setting("checkbox", true) === true
   readonly property var activeTasks: (summary && summary[activeTab]) ? summary[activeTab] : []
 
   readonly property string serverLabel: summary && summary.server !== "" ? summary.server : "Mindwtr"
@@ -66,6 +88,7 @@ Panel {
     setCenterHoverRevealSuppressed(false)
     root.controller.show()
     root.refresh()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function openFromHotkey() {
@@ -74,6 +97,7 @@ Panel {
     root.refresh()
     Qt.callLater(function() {
       if (root.opened) setCenterHoverRevealSuppressed(true)
+      keyCatcher.forceActiveFocus()
     })
   }
 
@@ -117,6 +141,87 @@ Panel {
     }
     errorText = ""
     summary = parsed
+    root.clampSelection()
+  }
+
+  function clampSelection() {
+    var count = activeTasks.length
+    if (count === 0) selectedIndex = 0
+    else if (selectedIndex >= count) selectedIndex = count - 1
+    else if (selectedIndex < 0) selectedIndex = 0
+  }
+
+  function selectTab(key) {
+    activeTab = String(key)
+    selectedIndex = 0
+    detailsOpen = false
+    detailTask = null
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function cycleTab(delta) {
+    if (detailsOpen || tabs.length === 0) return
+    var index = 0
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].key === activeTab) index = i
+    index = (index + delta + tabs.length) % tabs.length
+    selectTab(tabs[index].key)
+  }
+
+  function selectedTask() {
+    if (detailsOpen) return detailTask
+    return selectedIndex >= 0 && selectedIndex < activeTasks.length ? activeTasks[selectedIndex] : null
+  }
+
+  function moveSelection(delta) {
+    if (detailsOpen) {
+      detailFlick.contentY = Math.max(0, Math.min(detailFlick.contentHeight - detailFlick.height, detailFlick.contentY + delta * Style.space(48)))
+      return
+    }
+    var count = activeTasks.length
+    if (count === 0) return
+    var next = selectedIndex + delta
+    if (next < 0) next = 0
+    if (next > count - 1) next = count - 1
+    selectedIndex = next
+    root.ensureVisible()
+  }
+
+  function ensureVisible() {
+    var item = taskRepeater.itemAt(selectedIndex)
+    if (!item || !listFlick) return
+    var top = item.y
+    var bottom = item.y + item.height
+    if (top < listFlick.contentY) listFlick.contentY = top
+    else if (bottom > listFlick.contentY + listFlick.height) listFlick.contentY = bottom - listFlick.height
+  }
+
+  function openTaskDetails(task) {
+    if (!task || !task.id) return
+    detailTask = task
+    detailError = ""
+    detailsOpen = true
+    detailLoading = true
+    taskProc.command = ["bash", root.scriptPath, "task", String(task.id)]
+    taskProc.running = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function closeDetails() {
+    detailsOpen = false
+    detailTask = null
+    detailError = ""
+    detailLoading = false
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function handleTask(raw) {
+    detailLoading = false
+    var parsed = Model.parseTask(raw)
+    if (!parsed.ok) {
+      detailError = Model.errorText(parsed.error)
+      return
+    }
+    detailTask = parsed.task
   }
 
   function showToast(message, isError) {
@@ -135,14 +240,21 @@ Panel {
   }
 
   function completeTask(task) {
-    if (!completeOnClick || !task || task.id === "" || completeProc.running) return
+    if (!task || !task.id || completeProc.running) return
+    pendingCompleteId = String(task.id)
     completeProc.command = ["bash", root.scriptPath, "complete", String(task.id)]
     completeProc.running = true
   }
 
-  function selectTab(key) {
-    activeTab = String(key)
+  function openAttachment(uri) {
+    var value = String(uri || "")
+    if (value === "") return
+    if (value.indexOf("http://") !== 0 && value.indexOf("https://") !== 0 && value.indexOf("file://") !== 0) return
+    if (root.bar && typeof root.bar.run === "function")
+      root.bar.run("xdg-open " + (typeof root.bar.shellQuote === "function" ? root.bar.shellQuote(value) : "'" + value + "'"))
   }
+
+  property string pendingCompleteId: ""
 
   // ---- IO -----------------------------------------------------------------
   Process {
@@ -152,6 +264,15 @@ Panel {
       onStreamFinished: root.handleSummary(text)
     }
     onRunningChanged: if (!running && root.loading) root.loading = false
+  }
+
+  Process {
+    id: taskProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleTask(text)
+    }
+    onRunningChanged: if (!running && root.detailLoading) root.detailLoading = false
   }
 
   Process {
@@ -180,6 +301,8 @@ Panel {
         var parsed = Model.parseMutation(text)
         if (parsed.ok) {
           root.showToast("Completed", false)
+          if (root.detailsOpen && root.detailTask && String(root.detailTask.id) === root.pendingCompleteId)
+            root.closeDetails()
           Qt.callLater(root.refresh)
         } else {
           root.showToast(Model.errorText(parsed.error), true)
@@ -223,16 +346,33 @@ Panel {
     open: root.opened
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(460))
+    contentWidth: panel.fittedContentWidth(Style.space(480))
     contentHeight: panel.fittedContentHeight(bodyColumn.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       blocked: captureField.activeFocus
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
-      onReturnRequested: captureField.forceActiveFocus()
+      onMoveRequested: function(dx, dy) {
+        if (dy !== 0) root.moveSelection(dy)
+        else if (dx !== 0) root.cycleTab(dx)
+      }
+      onActivateRequested: if (!root.detailsOpen) root.openTaskDetails(root.selectedTask())
+      onCloseRequested: { if (root.detailsOpen) root.closeDetails(); else root.close() }
+      onTabRequested: function(direction) { if (!root.detailsOpen) root.switchPanel(direction) }
+      onTextKey: function(t) {
+        var key = String(t)
+        var lower = key.toLowerCase()
+        if (lower === "d") root.completeTask(root.selectedTask())
+        else if (lower === "c" || key === "/") { captureField.forceActiveFocus() }
+        else if (lower === "r") root.refresh()
+        else if (key === "g") { root.selectedIndex = 0; root.ensureVisible() }
+        else if (key === "G") { root.selectedIndex = Math.max(0, root.activeTasks.length - 1); root.ensureVisible() }
+        else if (key >= "1" && key <= "9") {
+          var tabIndex = parseInt(key, 10) - 1
+          if (tabIndex < root.tabs.length) root.selectTab(root.tabs[tabIndex].key)
+        }
+      }
 
       Column {
         id: bodyColumn
@@ -244,11 +384,40 @@ Panel {
           width: parent.width
           height: Style.space(26)
 
-          Text {
-            id: titleText
+          Rectangle {
+            id: backButton
+            visible: root.detailsOpen
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "Mindwtr"
+            width: Style.space(22)
+            height: Style.space(22)
+            radius: Math.min(5, Style.cornerRadius)
+            color: backMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+
+            Text {
+              anchors.centerIn: parent
+              text: "\uf060"
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              textFormat: Text.PlainText
+            }
+
+            MouseArea {
+              id: backMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.closeDetails()
+            }
+          }
+
+          Text {
+            id: titleText
+            anchors.left: root.detailsOpen ? backButton.right : parent.left
+            anchors.leftMargin: root.detailsOpen ? Style.space(6) : 0
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.detailsOpen ? "Task details" : "Mindwtr"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.heading
@@ -257,6 +426,7 @@ Panel {
           }
 
           Text {
+            visible: !root.detailsOpen
             anchors.left: titleText.right
             anchors.leftMargin: Style.space(8)
             anchors.right: refreshButton.left
@@ -300,6 +470,7 @@ Panel {
 
         // ---- bucket tabs
         Row {
+          visible: !root.detailsOpen
           width: parent.width
           spacing: Style.space(4)
 
@@ -370,6 +541,7 @@ Panel {
         // ---- task list
         Flickable {
           id: listFlick
+          visible: !root.detailsOpen
           width: parent.width
           height: Math.min(listColumn.implicitHeight, Style.space(360))
           contentWidth: width
@@ -384,18 +556,22 @@ Panel {
             spacing: Style.space(2)
 
             Repeater {
+              id: taskRepeater
               model: root.activeTasks
 
               Rectangle {
                 required property var modelData
                 required property int index
+                readonly property bool selected: index === root.selectedIndex
                 readonly property bool overdue: Model.isOverdue(modelData)
                 readonly property string meta: Model.subtitle(modelData)
 
                 width: listColumn.width
                 height: taskColumn.implicitHeight + Style.space(12)
                 radius: Style.cornerRadius
-                color: taskMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
+                color: selected
+                  ? Util.alpha(Color.accent, 0.16)
+                  : (rowMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent")
 
                 Row {
                   anchors.left: parent.left
@@ -405,16 +581,35 @@ Panel {
                   anchors.rightMargin: Style.space(6)
                   spacing: Style.space(8)
 
-                  Text {
-                    visible: root.completeOnClick
-                    text: taskMouse.containsMouse ? "\uf00c" : (modelData.focused ? "\uf005" : "\uf111")
-                    color: taskMouse.containsMouse ? Color.accent : Color.muted
-                    font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.caption
-                    textFormat: Text.PlainText
+                  Rectangle {
+                    id: marker
+                    width: Style.space(16)
+                    height: width
+                    radius: Math.min(4, Style.cornerRadius)
+                    border.width: root.showCheckbox ? 1 : 0
+                    border.color: Util.alpha(root.bar.foreground, 0.35)
+                    color: "transparent"
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(14)
-                    horizontalAlignment: Text.AlignHCenter
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: modelData.focused
+                        ? "\uf005"
+                        : (root.showCheckbox ? (markerMouse.containsMouse ? "\uf00c" : "") : "\uf111")
+                      color: modelData.focused ? Color.accent : (markerMouse.containsMouse ? Color.accent : Color.muted)
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                      textFormat: Text.PlainText
+                    }
+
+                    MouseArea {
+                      id: markerMouse
+                      anchors.fill: parent
+                      enabled: root.showCheckbox
+                      hoverEnabled: true
+                      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                      onClicked: root.completeTask(modelData)
+                    }
                   }
 
                   Column {
@@ -430,6 +625,7 @@ Panel {
                       font.pixelSize: Style.font.body
                       textFormat: Text.PlainText
                       elide: Text.ElideRight
+                      font.bold: selected
                     }
 
                     Text {
@@ -446,11 +642,14 @@ Panel {
                 }
 
                 MouseArea {
-                  id: taskMouse
+                  id: rowMouse
                   anchors.fill: parent
                   hoverEnabled: true
-                  cursorShape: root.completeOnClick ? Qt.PointingHandCursor : Qt.ArrowCursor
-                  onClicked: root.completeTask(modelData)
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.selectedIndex = index
+                    root.openTaskDetails(modelData)
+                  }
                 }
               }
             }
@@ -472,9 +671,198 @@ Panel {
           }
         }
 
+        // ---- details
+        Flickable {
+          id: detailFlick
+          visible: root.detailsOpen
+          width: parent.width
+          height: Math.min(detailColumn.implicitHeight, Style.space(380))
+          contentWidth: width
+          contentHeight: detailColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+
+          Column {
+            id: detailColumn
+            width: detailFlick.width
+            spacing: Style.space(10)
+
+            Text {
+              width: parent.width
+              text: root.detailTitle
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+            }
+
+            Text {
+              visible: root.detailLoading
+              width: parent.width
+              text: "Loading details\u2026"
+              color: Color.muted
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              textFormat: Text.PlainText
+              font.italic: true
+            }
+
+            Text {
+              visible: root.detailError !== ""
+              width: parent.width
+              text: root.detailError
+              color: Color.urgent
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+            }
+
+            Repeater {
+              model: Model.detailRows(root.detailTask)
+
+              Item {
+                required property var modelData
+                width: detailColumn.width
+                height: Math.max(labelItem.implicitHeight, valueItem.implicitHeight)
+
+                Text {
+                  id: labelItem
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  width: Style.space(76)
+                  text: modelData.label
+                  color: Color.muted
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  textFormat: Text.PlainText
+                }
+
+                Text {
+                  id: valueItem
+                  anchors.left: labelItem.right
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  text: modelData.value
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  textFormat: Text.PlainText
+                  wrapMode: Text.Wrap
+                }
+              }
+            }
+
+            // ---- description
+            Rectangle {
+              visible: root.detailDescription !== ""
+              width: parent.width
+              height: Style.spacing.hairline
+              color: root.bar.foreground
+              opacity: 0.12
+            }
+
+            Text {
+              visible: root.detailDescription !== ""
+              width: parent.width
+              text: root.detailDescription
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+            }
+
+            // ---- checklist
+            Column {
+              visible: root.detailChecklist.length > 0
+              width: parent.width
+              spacing: Style.space(3)
+
+              Repeater {
+                model: root.detailChecklist
+
+                Row {
+                  required property var modelData
+                  spacing: Style.space(6)
+
+                  Text {
+                    text: modelData.done ? "\uf14a" : "\uf096"
+                    color: modelData.done ? Color.accent : Color.muted
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Text {
+                    text: modelData.title
+                    color: modelData.done ? Color.muted : root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.strikeout: modelData.done
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+              }
+            }
+
+            // ---- attachments
+            Column {
+              visible: root.detailAttachments.length > 0
+              width: parent.width
+              spacing: Style.space(3)
+
+              Repeater {
+                model: root.detailAttachments
+
+                Row {
+                  required property var modelData
+                  spacing: Style.space(6)
+
+                  Text {
+                    text: "\uf0c1"
+                    color: Color.muted
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Text {
+                    text: modelData.title !== "" ? modelData.title : modelData.uri
+                    color: Color.accent
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openAttachment(modelData.uri)
+                  }
+                }
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: "d done  \u00b7  Esc back"
+              color: Color.muted
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              textFormat: Text.PlainText
+            }
+          }
+        }
+
         // ---- quick capture
         Row {
-          visible: root.quickAddEnabled
+          visible: root.quickAddEnabled && !root.detailsOpen
           width: parent.width
           spacing: Style.space(8)
 
@@ -490,8 +878,8 @@ Panel {
                 root.submitCapture()
                 event.accepted = true
               } else if (event.key === Qt.Key_Escape) {
-                root.close()
                 event.accepted = true
+                keyCatcher.forceActiveFocus()
               }
             }
           }
@@ -531,8 +919,11 @@ Panel {
           width: parent.width
           text: {
             if (root.errorText !== "" && !root.summary) return "Set the server in ~/.config/omarchy/mindwtr.json"
-            var when = root.summary && root.summary.fetchedAt !== "" ? root.summary.fetchedAt.replace("T", " ").replace("Z", " UTC") : ""
-            return when === "" ? "" : "Updated " + when
+            if (root.detailsOpen) return ""
+            var hints = "\u2191\u2193 move  \u00b7  Enter details  \u00b7  d done  \u00b7  c capture"
+            if (root.summary && root.summary.fetchedAt !== "")
+              hints += "  \u00b7  " + root.summary.fetchedAt.replace("T", " ").replace("Z", " UTC")
+            return hints
           }
           color: Color.muted
           font.family: root.bar.fontFamily

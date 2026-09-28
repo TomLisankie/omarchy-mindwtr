@@ -7,8 +7,12 @@ opening the app.
 
 - **Bar icon** with a badge counting Focus / Inbox / Next / Waiting (configurable).
 - **Popup panel** with tabs for Focus, Inbox, Next, Waiting and Someday.
-- **Quick capture** into the Inbox (`POST /v1/tasks`).
-- **Mark done** on click (`POST /v1/tasks/:id/complete`).
+- **Details view** for the selected task: status, project, contexts, dates,
+  priority, estimate, description, checklist and attachments.
+- **Quick capture** into the Inbox with `POST /v1/tasks`.
+- **Mark done** with `d` or the row checkbox (`POST /v1/tasks/:id/complete`).
+- Full keyboard control: arrows/`j`/`k` to move, `Enter` for details, `d` for
+  done, `c` to capture, `Esc` to back out.
 - Talks to the Cloud REST API over HTTPS with a bearer token; no local SQLite,
   no MCP helper process.
 
@@ -51,6 +55,7 @@ chmod 600 ~/.config/omarchy/mindwtr.json   # protect the token
 
 - `baseUrl` — full scheme and host (a bare host defaults to `https://`).
 - `token` — the same bearer token your Mindwtr clients use on `/v1/*`.
+- `label` — optional friendly name shown in the panel header instead of the host.
 - `insecureSkipVerify` — set `true` only for a self-signed certificate you
   control. It maps to `curl -k`.
 - `allowInsecureHttp` — plain `http://` to a non-loopback host is refused
@@ -59,7 +64,8 @@ chmod 600 ~/.config/omarchy/mindwtr.json   # protect the token
 
 Environment variables `MINDWTR_CLOUD_URL` and `MINDWTR_CLOUD_TOKEN` take
 precedence over the file. `MINDWTR_CONFIG` overrides the config path, and
-`MINDWTR_ALLOW_INSECURE_HTTP=1` opts into plain HTTP for a non-loopback host.
+`MINDWTR_ALLOW_INSECURE_HTTP=1` opts into plain HTTP for a non-loopback host,
+and `MINDWTR_LABEL` overrides the display name.
 
 The config is read on every refresh, so edits apply without a restart.
 
@@ -72,8 +78,25 @@ Set in the bar widget's settings UI or inline in `shell.json`:
 | `badge` | `inbox` | Which bucket the bar number counts: `focus`, `inbox`, `next`, `waiting`. |
 | `showCount` | `true` | Show the badge at all. |
 | `quickAdd` | `true` | Show the capture field in the panel. |
-| `completeOnClick` | `true` | Clicking a task row marks it done. |
+| `checkbox` | `true` | Show a row checkbox; clicking it or pressing `d` marks done. Clicking the row opens details. |
 | `refreshIntervalSec` | `120` | Server poll interval (30–3600). |
+
+## Keyboard
+
+With the capture field not focused:
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` or `k` / `j` | Move the row cursor |
+| `←` / `→` or `1`–`5` | Switch bucket tab |
+| `g` / `G` | Jump to first / last row |
+| `Enter` / `Space` | Open the selected task's details |
+| `d` | Mark the selected (or shown) task done |
+| `c` or `/` | Focus the capture field |
+| `r` | Refresh from the server |
+| `Esc` | Back out of details, else close the panel |
+
+In the capture field, `Enter` adds the task and `Esc` returns to the list.
 
 ## How it works
 
@@ -88,6 +111,7 @@ Endpoints used:
 | Command | Request |
 | --- | --- |
 | `summary` | `GET /v1/projects?limit=500`, paged `GET /v1/tasks` |
+| `task` | `GET /v1/tasks/<id>` (+ projects for the title) |
 | `capture` | `POST /v1/tasks` with `{ "input": "<text>" }` |
 | `complete` | `POST /v1/tasks/<id>/complete` |
 
