@@ -1,5 +1,6 @@
 {
   "baseUrl": "https://mindwtr.example.com",
   "token": "REPLACE_WITH_YOUR_BEARER_TOKEN",
-  "insecureSkipVerify": false
+  "insecureSkipVerify": false,
+  "allowInsecureHttp": false
 }

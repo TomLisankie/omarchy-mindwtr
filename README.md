@@ -53,9 +53,13 @@ chmod 600 ~/.config/omarchy/mindwtr.json   # protect the token
 - `token` — the same bearer token your Mindwtr clients use on `/v1/*`.
 - `insecureSkipVerify` — set `true` only for a self-signed certificate you
   control. It maps to `curl -k`.
+- `allowInsecureHttp` — plain `http://` to a non-loopback host is refused
+  because it would put the token on the wire in cleartext. Set this to `true`
+  only for a trusted private network you control.
 
 Environment variables `MINDWTR_CLOUD_URL` and `MINDWTR_CLOUD_TOKEN` take
-precedence over the file. `MINDWTR_CONFIG` overrides the config path.
+precedence over the file. `MINDWTR_CONFIG` overrides the config path, and
+`MINDWTR_ALLOW_INSECURE_HTTP=1` opts into plain HTTP for a non-loopback host.
 
 The config is read on every refresh, so edits apply without a restart.
 
@@ -65,7 +69,7 @@ Set in the bar widget's settings UI or inline in `shell.json`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `badge` | `focus` | Which bucket the bar number counts: `focus`, `inbox`, `next`, `waiting`. |
+| `badge` | `inbox` | Which bucket the bar number counts: `focus`, `inbox`, `next`, `waiting`. |
 | `showCount` | `true` | Show the badge at all. |
 | `quickAdd` | `true` | Show the capture field in the panel. |
 | `completeOnClick` | `true` | Clicking a task row marks it done. |
@@ -77,8 +81,7 @@ Set in the bar widget's settings UI or inline in `shell.json`:
 config, calls the Cloud API, and prints one normalized JSON object per
 invocation. `Panel.qml` runs it through Quickshell's `Process` and renders the
 result; `Model.js` holds the pure parsing and formatting so it is testable on
-its own. The token only ever appears in the `curl` header inside that script,
-never in a shell command line the shell logs.
+its own.
 
 Endpoints used:
 
@@ -89,6 +92,20 @@ Endpoints used:
 | `complete` | `POST /v1/tasks/<id>/complete` |
 
 The task list is paged up to 1000 tasks per refresh.
+
+## Security
+
+- The bearer token is read from `~/.config/omarchy/mindwtr.json` and handed to
+  `curl` through a config stream on stdin, so it never appears in a process
+  argument list where other local processes could read it.
+- Plain `http://` is refused for any non-loopback host; loopback is allowed for
+  local test servers. `insecureSkipVerify` only relaxes certificate checking and
+  is opt-in.
+- Each response is capped at 16 MiB (`MINDWTR_MAX_RESPONSE_BYTES`) and each
+  request has an 8 s timeout (`MINDWTR_TIMEOUT`), so a broken or hostile server
+  cannot make the long-lived shell buffer an unbounded body.
+- The plugin never writes your tasks or configuration; the only state it owns is
+  the token file you create.
 
 ## Remove
 

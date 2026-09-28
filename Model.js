@@ -103,6 +103,7 @@ function errorText(code) {
     case "no_token": return "No API token configured"
     case "unauthorized": return "The server rejected the token"
     case "unreachable": return "Server unreachable"
+    case "insecure_http": return "Refusing to send the token over plain HTTP"
     case "bad_response": return "The server returned an unexpected response"
     case "empty": return "Nothing to capture"
     case "missing_id": return "Missing task id"
