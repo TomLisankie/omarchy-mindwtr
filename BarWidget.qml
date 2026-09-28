@@ -27,7 +27,7 @@ BarWidget {
   property int waitingCount: panel ? (panel.waitingCount || 0) : 0
   property string statusText: panel ? (panel.statusText || "") : ""
 
-  readonly property string badgeMode: String(setting("badge", "focus"))
+  readonly property string badgeMode: String(setting("badge", "inbox"))
   readonly property bool showCount: setting("showCount", true) === true
   readonly property int displayedCount: badgeMode === "inbox" ? inboxCount
     : badgeMode === "next" ? nextCount

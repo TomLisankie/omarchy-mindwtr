@@ -132,7 +132,7 @@ cmd_summary() {
     ($tasks | map(norm)) as $t
     | ($t | map(select(.focused == true))) as $focus
     | ($t | map(select(.status == "inbox"))) as $inbox
-    | ($t | map(select(.status == "next" and .focused != true))) as $next
+    | ($t | map(select(.status == "next"))) as $next
     | ($t | map(select(.status == "waiting"))) as $waiting
     | ($t | map(select(.status == "someday"))) as $someday
     | {

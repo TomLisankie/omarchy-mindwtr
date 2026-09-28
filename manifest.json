@@ -25,7 +25,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "badge": "focus",
+      "badge": "inbox",
       "showCount": true,
       "quickAdd": true,
       "completeOnClick": true,
@@ -43,7 +43,7 @@
           "next",
           "waiting"
         ],
-        "defaultValue": "focus"
+        "defaultValue": "inbox"
       },
       {
         "key": "showCount",
