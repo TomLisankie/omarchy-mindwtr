@@ -17,6 +17,8 @@ opening the app.
 - Omarchy with the Quickshell shell (`omarchy-shell`).
 - A reachable self-hosted Mindwtr Cloud endpoint and one of its bearer tokens.
 - `bash`, `curl`, `jq` (all present on a stock Omarchy install).
+- The plugin makes network requests only to the `baseUrl` you configure, using
+your bearer token. No other external dependencies.
 
 ## Install
 
@@ -87,6 +89,17 @@ Endpoints used:
 | `complete` | `POST /v1/tasks/<id>/complete` |
 
 The task list is paged up to 1000 tasks per refresh.
+
+## Remove
+
+```bash
+omarchy plugin remove mindwtr
+rm -f ~/.config/omarchy/mindwtr.json   # deletes the stored token
+```
+
+`omarchy plugin remove` takes the widget out of the bar and deletes
+`~/.config/omarchy/plugins/mindwtr`. Removing the config file is only needed
+if you want to erase the bearer token too.
 
 ## Troubleshooting
 
