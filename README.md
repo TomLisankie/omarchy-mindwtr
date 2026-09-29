@@ -112,7 +112,7 @@ Endpoints used:
 | --- | --- |
 | `summary` | `GET /v1/projects?limit=500`, paged `GET /v1/tasks` |
 | `task` | `GET /v1/tasks/<id>` (+ projects for the title) |
-| `capture` | `POST /v1/tasks` with `{ "input": "<text>" }` |
+| `capture` | `POST /v1/tasks` with `{ "input": "<text>" }`; the text is read from stdin, not from an argument |
 | `complete` | `POST /v1/tasks/<id>/complete` |
 
 The task list is paged up to 1000 tasks per refresh.
@@ -122,6 +122,13 @@ The task list is paged up to 1000 tasks per refresh.
 - The bearer token is read from `~/.config/omarchy/mindwtr.json` and handed to
   `curl` through a config stream on stdin, so it never appears in a process
   argument list where other local processes could read it.
+- Task text follows the same rule. Quick capture passes the text to the helper on
+  stdin, the helper builds the JSON body itself, and that body is sent to `curl`
+  through the same stdin config stream. No task content is ever an argument of
+  `bash`, the helper, or `curl`, so it stays out of `/proc/<pid>/cmdline` while
+  those processes run. Only opaque task ids appear in an argument list.
+- Attachment URIs are opened by passing them to `xdg-open` as a single argument
+  list element, not by splicing them into a shell command string.
 - Plain `http://` is refused for any non-loopback host; loopback is allowed for
   local test servers. `insecureSkipVerify` only relaxes certificate checking and
   is opt-in.
@@ -152,6 +159,7 @@ if you want to erase the bearer token too.
 
   ```bash
   bash ~/.config/omarchy/plugins/mindwtr/mindwtr-api.sh summary | jq .
+  printf 'Buy milk\n' | bash ~/.config/omarchy/plugins/mindwtr/mindwtr-api.sh capture | jq .
   ```
 
 ## License

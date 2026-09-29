@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mindwtr",
   "name": "Mindwtr",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Sebastian",
   "license": "MIT",
   "description": "Mindwtr GTD tasks from a self-hosted Mindwtr Cloud server in the Omarchy bar.",

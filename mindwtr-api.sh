@@ -8,13 +8,14 @@
 #      "allowInsecureHttp": false})
 #
 # Every subcommand prints a single JSON object on stdout and exits 0 for
-# expected failures, so the QML side only ever has to parse JSON. The token is
-# passed to curl through a config stream on stdin, never on a command line, and
-# plain http:// is refused for non-loopback hosts unless the user opts in.
+# expected failures, so the QML side only ever has to parse JSON. The token and
+# any request body are handed to curl through a config stream on stdin, never on
+# a command line, and plain http:// is refused for non-loopback hosts unless the
+# user opts in.
 #
 # Subcommands:
 #   summary            Fetch tasks + projects and emit grouped buckets
-#   capture <text>     Quick-add a task to the Inbox (POST /v1/tasks)
+#   capture            Read the task text from stdin; POST it to the Inbox
 #   complete <id>      Mark a task done (POST /v1/tasks/:id/complete)
 #   task <id>          Fetch one task's full details (GET /v1/tasks/:id)
 #   ping               Verify URL + token with a tiny request
@@ -108,14 +109,29 @@ fi
 resp_body=""
 resp_code=""
 
-# Emit a curl config snippet carrying the Authorization header. Reading it from
-# stdin keeps the token out of the process argv that `ps` can inspect.
-auth_config() {
-  local value="${token//$'\\'/\\\\}"
+# Escape a value for a curl config file: backslashes and quotes are escaped so
+# curl hands back the original bytes, and raw newlines are dropped because curl's
+# config parser would turn them into line breaks mid-value.
+config_value() {
+  local value="${1//$'\\'/\\\\}"
+  local nl=$'\n' cr=$'\r'
   value="${value//\"/\\\"}"
-  value="${value//$'\n'/}"
-  value="${value//$'\r'/}"
-  printf 'header = "Authorization: Bearer %s"\n' "$value"
+  value="${value//$nl/}"
+  value="${value//$cr/}"
+  printf '%s' "$value"
+}
+
+# Emit the curl config read from stdin: the Authorization header, plus the
+# Content-Type header and request body for writes. Keeping the body in this
+# stream instead of an argv element means task text never shows up in the
+# command line that `ps` or /proc/<pid>/cmdline exposes.
+curl_config() {
+  local data="${1:-}"
+  printf 'header = "Authorization: Bearer %s"\n' "$(config_value "$token")"
+  if [[ -n $data ]]; then
+    printf 'header = "Content-Type: application/json"\n'
+    printf 'data-binary = "%s"\n' "$(config_value "$data")"
+  fi
 }
 
 request() { # method path [json-data]
@@ -125,11 +141,8 @@ request() { # method path [json-data]
     -H "Accept: application/json"
     -w $'\n%{http_code}')
   [[ -n $insecure ]] && args+=(-k)
-  if [[ -n $data ]]; then
-    args+=(-H "Content-Type: application/json" --data-binary "$data")
-  fi
   local out
-  out=$(auth_config | curl --config - "${args[@]}" "$base_url$path" 2>/dev/null)
+  out=$(curl_config "$data" | curl --config - "${args[@]}" "$base_url$path" 2>/dev/null)
   resp_code="${out##*$'\n'}"
   resp_body="${out%$'\n'*}"
   # A 2xx that did not yield a JSON body means the transfer was truncated (for
@@ -231,7 +244,12 @@ cmd_summary() {
 }
 
 cmd_capture() {
-  local text="${1:-}"
+  # The task text arrives on stdin, never as an argument, so private quick-capture
+  # content stays out of the process command line. One line is enough because the
+  # panel's capture field is single-line; trailing CR is tolerated.
+  local text=""
+  IFS= read -r text || true
+  text="${text%$'\r'}"
   [[ -n ${text//[[:space:]]/} ]] || emit_error "empty"
   local payload
   payload=$(jq -cn --arg t "$text" '{ input: $t }')

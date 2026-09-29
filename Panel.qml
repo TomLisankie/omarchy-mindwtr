@@ -53,6 +53,9 @@ Panel {
 
   property string captureText: ""
   property bool capturing: false
+  // Holds the text for the helper until the capture process has started, because
+  // stdin can only be written to a running process.
+  property string pendingCaptureText: ""
   property string toast: ""
   property bool toastIsError: false
 
@@ -235,7 +238,10 @@ Panel {
     var text = String(captureText).replace(/^\s+|\s+$/g, "")
     if (text === "") return
     capturing = true
-    captureProc.command = ["bash", root.scriptPath, "capture", text]
+    // The text goes to the helper on stdin, never as an argument: a command line
+    // is readable from /proc by any local process while the helper runs.
+    pendingCaptureText = text
+    captureProc.command = ["bash", root.scriptPath, "capture"]
     captureProc.running = true
   }
 
@@ -250,8 +256,10 @@ Panel {
     var value = String(uri || "")
     if (value === "") return
     if (value.indexOf("http://") !== 0 && value.indexOf("https://") !== 0 && value.indexOf("file://") !== 0) return
-    if (root.bar && typeof root.bar.run === "function")
-      root.bar.run("xdg-open " + (typeof root.bar.shellQuote === "function" ? root.bar.shellQuote(value) : "'" + value + "'"))
+    // Handed to xdg-open as a single argv element rather than as text spliced
+    // into a shell string, so no quoting can be got wrong.
+    openProc.command = ["xdg-open", value]
+    openProc.running = true
   }
 
   property string pendingCompleteId: ""
@@ -277,6 +285,16 @@ Panel {
 
   Process {
     id: captureProc
+    // The helper reads the task text from stdin so it never reaches a command
+    // line. Writes go through onStarted because write() is a no-op while the
+    // process is not running yet.
+    stdinEnabled: true
+    onStarted: {
+      if (root.pendingCaptureText === "") return
+      var text = root.pendingCaptureText
+      root.pendingCaptureText = ""
+      captureProc.write(text + "\n")
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -290,7 +308,14 @@ Panel {
         }
       }
     }
-    onRunningChanged: if (!running) root.capturing = false
+    onRunningChanged: if (!running) {
+      root.capturing = false
+      if (root.pendingCaptureText !== "") root.pendingCaptureText = ""
+    }
+  }
+
+  Process {
+    id: openProc
   }
 
   Process {
